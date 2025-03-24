@@ -55,7 +55,7 @@ def get_task(task_id):
 
     return jsonify({
         'id': task.id,
-        'title': task.title+"asdfasdfas",
+        'title': task.title,
         'description': task.description,
         'status': task.status,
         'assignee': task.assignee,
@@ -77,7 +77,7 @@ def edit_task(task_id):
     db.session.commit()
 
     return jsonify({'message': 'Task updated successfully', 'task': {
-        'id': task.id,
+        'id': task.id + "asmay",
         'title': task.title,
         'description': task.description,
         'status': task.status,
