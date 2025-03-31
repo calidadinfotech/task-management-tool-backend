@@ -101,6 +101,21 @@ def get_all_tasks():
 
     return jsonify({'tasks': tasks_list}), 200
 
+    # Delete All Tasks
+@app.route('/tasks/delete-all', methods=['DELETE'])
+def delete_all_tasks():
+    try:
+        # Delete all tasks from the database
+        num_deleted = db.session.query(Task).delete()
+        db.session.commit()
+        return jsonify({
+            'message': f'Successfully deleted all tasks',
+            'count': num_deleted
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to delete tasks: {str(e)}'}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True)
