@@ -4,36 +4,84 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+
 jobs:
   defect-detector:
     runs-on: ubuntu-latest
     env:
-      WEBHOOK_URL: "https://api.ozar.ai/api/integrations/defect-detector-webhook/"
-      PROJECT_ID: 233
+      PROJECT_ID: 2
       PROJECT_KEY: "TMT"
-      TIME_UNIT: "minutes"
-      TIME_VALUE: "30"
+      TIME_UNIT: "hours"
+      TIME_VALUE: "1"
+      # common path for all environments
+      WEBHOOK_PATH: "/api/integrations/defect-detector-webhook/"
+
+# jobs:
+#   defect-detector:
+#     runs-on: ubuntu-latest
+#     env:
+#       WEBHOOK_URL: ${{ vars.WEBHOOK_URL }}
+#       PROJECT_ID: ${{ vars.PROJECT_ID }}
+#       PROJECT_KEY: ${{ secrets.PROJECT_KEY }}
+#       TIME_UNIT: ${{ vars.TIME_UNIT }}
+#       TIME_VALUE: ${{ vars.TIME_VALUE }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up environment (if needed)
+      - name: Set environment title (env_title)
         run: |
+          BRANCH=${GITHUB_REF##*/}
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "ENV_TITLE=prod" >> $GITHUB_ENV
+          elif [[ "$BRANCH" == "stage" ]]; then
+            echo "ENV_TITLE=stage" >> $GITHUB_ENV
+          else
+            echo "ENV_TITLE=dev" >> $GITHUB_ENV
+          fi
+
+      - name: Set WEBHOOK_URL based on ENV_TITLE
+        run: |
+          case "$ENV_TITLE" in
+            prod)
+              BASE="prod-api.ozar.ai"
+              ;;
+            stage)
+              BASE="staging-api.ozar.ai"
+              ;;
+            dev)
+              BASE="dev-api.ozar.ai"
+              ;;
+          esac
+          echo "WEBHOOK_URL=https://${BASE}${WEBHOOK_PATH}" >> $GITHUB_ENV
+
+      - name: Debug print
+        run: |
+          echo "Branch: ${{ github.ref }}"
+          echo "ENV_TITLE: $ENV_TITLE"
+          echo "WEBHOOK_URL: $WEBHOOK_URL"
+
+      - name: Set up environment
+        run: |
+          # Add any setup you need here, such as installing dependencies.
           sudo apt-get install curl jq
 
       - name: Trigger Defect Detector webhook
         id: trigger_webhook
         run: |
-          PR_NUMBER="${ github.event.pull_request.number }"
-          REPO_NAME="${ github.event.repository.name }"
-          BRANCH_NAME="${ github.head_ref }"
+          # Gather PR metadata
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO_NAME="${{ github.event.repository.name }}" # Use context variable for repo name only
+          BRANCH_NAME="${{ github.head_ref }}"
 
+          # Construct repos_branches as a JSON array
           REPOS_BRANCHES=$(jq -n \
             --arg repo_name "$REPO_NAME" \
             --arg branch_name "$BRANCH_NAME" \
             '[{"repo_name": $repo_name, "branch_name": $branch_name}]')
 
+          # Prepare the payload for the webhook
           PAYLOAD=$(jq -n \
             --argjson project_id "$PROJECT_ID" \
             --arg project_key "$PROJECT_KEY" \
@@ -48,22 +96,28 @@ jobs:
               time_value: $time_value
             }')
 
+          # Send the payload to the backend webhook and capture the response
           RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL")
 
+          # Store the response in the output and also write to a file for safe reading in the next step
           echo "webhook_response=$RESPONSE" >> $GITHUB_OUTPUT
           echo "$RESPONSE" > webhook_response.json
 
       - name: Post comment to PR with webhook results
         run: |
+          # Parse the webhook response and build a Markdown summary with real newlines
           STATUS=$(jq -r '.status' webhook_response.json)
           MESSAGE=$(jq -r '.message' webhook_response.json)
 
+          # Start the Markdown comment in a file to preserve newlines
           printf "### Defect Detector Results\n\n**Status:** %s  \n**Message:** %s\n\n#### Test Cases\n\n| Test Case ID | Title | Chance of Failure | Reason | Line of Code |\n|--------------|-------|------------------|--------|--------------|\n" "$STATUS" "$MESSAGE" > comment_body.txt
 
+          # Append each test case as a row in the table
           while IFS=$'\t' read -r id title chance reason loc; do
             printf "| %s | %s | %s | %s | %s |\n" "$id" "$title" "$chance" "$reason" "$loc" >> comment_body.txt
           done < <(jq -r '.prediction.test_cases[] | [ .test_case_id, .title, .chance_of_failure, .reason, .line_of_code ] | map(gsub("\\|"; "\\\\|")) | @tsv' webhook_response.json)
 
+          # Add token usage if available
           if jq -e '.token_usage' webhook_response.json > /dev/null; then
             PROMPT_TOKENS=$(jq -r '.token_usage.prompt_tokens' webhook_response.json)
             COMPLETION_TOKENS=$(jq -r '.token_usage.completion_tokens' webhook_response.json)
@@ -71,15 +125,17 @@ jobs:
             printf "\n#### Token Usage\n\n- Prompt tokens: %s\n- Completion tokens: %s\n- Total tokens: %s\n" "$PROMPT_TOKENS" "$COMPLETION_TOKENS" "$TOTAL_TOKENS" >> comment_body.txt
           fi
 
-          PR_NUMBER="${ github.event.pull_request.number }"
-          GITHUB_TOKEN="${ secrets.GITHUB_TOKEN }"
+          # Post a comment to GitHub PR using the GitHub API, reading the file content to preserve newlines
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+
           COMMENT_BODY=$(cat comment_body.txt)
 
           curl -X POST \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             -d "$(jq -nc --arg body "$COMMENT_BODY" '{body: $body}')" \
-            "https://api.github.com/repos/${ github.repository }/issues/${PR_NUMBER}/comments"
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
 
       - name: Handle errors
         if: failure()
