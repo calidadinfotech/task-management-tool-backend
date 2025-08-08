@@ -1,0 +1,88 @@
+name: Defect Detector for Pull Requests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  defect-detector:
+    runs-on: ubuntu-latest
+    env:
+      WEBHOOK_URL: "https://api.ozar.ai/api/integrations/defect-detector-webhook/"
+      PROJECT_ID: 233
+      PROJECT_KEY: "TMT"
+      TIME_UNIT: "minutes"
+      TIME_VALUE: "30"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up environment (if needed)
+        run: |
+          sudo apt-get install curl jq
+
+      - name: Trigger Defect Detector webhook
+        id: trigger_webhook
+        run: |
+          PR_NUMBER="${ github.event.pull_request.number }"
+          REPO_NAME="${ github.event.repository.name }"
+          BRANCH_NAME="${ github.head_ref }"
+
+          REPOS_BRANCHES=$(jq -n \
+            --arg repo_name "$REPO_NAME" \
+            --arg branch_name "$BRANCH_NAME" \
+            '[{"repo_name": $repo_name, "branch_name": $branch_name}]')
+
+          PAYLOAD=$(jq -n \
+            --argjson project_id "$PROJECT_ID" \
+            --arg project_key "$PROJECT_KEY" \
+            --argjson repos_branches "$REPOS_BRANCHES" \
+            --arg time_unit "$TIME_UNIT" \
+            --argjson time_value "$TIME_VALUE" \
+            '{
+              project_id: $project_id,
+              project_key: $project_key,
+              repos_branches: $repos_branches,
+              time_unit: $time_unit,
+              time_value: $time_value
+            }')
+
+          RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL")
+
+          echo "webhook_response=$RESPONSE" >> $GITHUB_OUTPUT
+          echo "$RESPONSE" > webhook_response.json
+
+      - name: Post comment to PR with webhook results
+        run: |
+          STATUS=$(jq -r '.status' webhook_response.json)
+          MESSAGE=$(jq -r '.message' webhook_response.json)
+
+          printf "### Defect Detector Results\n\n**Status:** %s  \n**Message:** %s\n\n#### Test Cases\n\n| Test Case ID | Title | Chance of Failure | Reason | Line of Code |\n|--------------|-------|------------------|--------|--------------|\n" "$STATUS" "$MESSAGE" > comment_body.txt
+
+          while IFS=$'\t' read -r id title chance reason loc; do
+            printf "| %s | %s | %s | %s | %s |\n" "$id" "$title" "$chance" "$reason" "$loc" >> comment_body.txt
+          done < <(jq -r '.prediction.test_cases[] | [ .test_case_id, .title, .chance_of_failure, .reason, .line_of_code ] | map(gsub("\\|"; "\\\\|")) | @tsv' webhook_response.json)
+
+          if jq -e '.token_usage' webhook_response.json > /dev/null; then
+            PROMPT_TOKENS=$(jq -r '.token_usage.prompt_tokens' webhook_response.json)
+            COMPLETION_TOKENS=$(jq -r '.token_usage.completion_tokens' webhook_response.json)
+            TOTAL_TOKENS=$(jq -r '.token_usage.total_tokens' webhook_response.json)
+            printf "\n#### Token Usage\n\n- Prompt tokens: %s\n- Completion tokens: %s\n- Total tokens: %s\n" "$PROMPT_TOKENS" "$COMPLETION_TOKENS" "$TOTAL_TOKENS" >> comment_body.txt
+          fi
+
+          PR_NUMBER="${ github.event.pull_request.number }"
+          GITHUB_TOKEN="${ secrets.GITHUB_TOKEN }"
+          COMMENT_BODY=$(cat comment_body.txt)
+
+          curl -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d "$(jq -nc --arg body "$COMMENT_BODY" '{body: $body}')" \
+            "https://api.github.com/repos/${ github.repository }/issues/${PR_NUMBER}/comments"
+
+      - name: Handle errors
+        if: failure()
+        run: |
+          echo "Error occurred during the defect detection process or posting the comment."
+          exit 1
