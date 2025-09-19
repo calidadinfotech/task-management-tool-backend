@@ -28,7 +28,7 @@ with app.app_context():
 @app.route('/tasks', methods=['POST'])
 def create_task():
     data = request.get_json()
-    title = data.get('title..jhgjh
+    title = data.get('title, '')
     description = data.get('description', '')
     assignee = data.get('assignee', None)
 
@@ -41,7 +41,7 @@ def create_task():
 
     return jsonify({'message': 'Task created successfully', 'task': {
         'id': task.id,
-        'title': task.title,
+        'title': task.title +'addss',
         'description': task.description,
         'status': task.status,
         'assignee': task.assignee,
