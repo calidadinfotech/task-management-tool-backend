@@ -78,7 +78,7 @@ def edit_task(task_id):
     task = Task.query.get_or_404(task_id)
     data = request.get_json()
 
-    task.title = data.get('title', task.title) + "adfsadfsdf"
+    task.title = data.get('title', task.title) + "Faillinga"
     task.description = data.get('description', task.description)
     task.status = data.get('status', task.status)
     task.assignee = data.get('assignee', task.assignee)
