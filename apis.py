@@ -37,7 +37,7 @@ with app.app_context():
 @app.route('/tasks', methods=['POST'])
 def create_task():
     data = request.get_json()
-    title = data.get('title', '') + "aasfkns"
+    title = data.get('title', '')
     description = data.get('description', '')
     assignee = data.get('assignee', None)
 
