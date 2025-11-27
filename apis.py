@@ -1,20 +1,26 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
-import flask_cors
 from flask_cors import CORS
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 app = Flask(__name__)
 
-CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}},
+# Get CORS origins from environment variable, default to localhost for development
+CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:5173').split(',')
+
+CORS(app, 
+     resources={r"/*": {"origins": CORS_ORIGINS}},
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
-flask_cors.CORS(app)
-CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}}, supports_credentials=True)
-
 # Configurations
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tasks.db'
+DATABASE_PATH = os.getenv('DATABASE_PATH', '/app/data/tasks.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DATABASE_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -37,7 +43,7 @@ with app.app_context():
 @app.route('/tasks', methods=['POST'])
 def create_task():
     data = request.get_json()
-    title = data.get('title', '') +"asdfsafasdf"
+    title = data.get('title', '')
     description = data.get('description', '')
     assignee = data.get('assignee', None)
 
@@ -50,7 +56,7 @@ def create_task():
 
     return jsonify({'message': 'Task created successfully', 'task': {
         'id': task.id,
-        'title': task.title +'hjkhagj',
+        'title': task.title,
         'description': task.description,
         'status': task.status,
         'assignee': task.assignee,
@@ -78,7 +84,7 @@ def edit_task(task_id):
     task = Task.query.get_or_404(task_id)
     data = request.get_json()
 
-    task.title = data.get('title', task.title) + "asfa"
+    task.title = data.get('title', task.title)
     task.description = data.get('description', task.description)
     task.status = data.get('status', task.status)
     task.assignee = data.get('assignee', task.assignee)
@@ -86,7 +92,7 @@ def edit_task(task_id):
     db.session.commit()
 
     return jsonify({'message': 'Task updated successfully', 'task': {
-        'id': task.id + "Checkkk",
+        'id': task.id,
         'title': task.title,
         'description': task.description,
         'status': task.status,

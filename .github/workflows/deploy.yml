@@ -1,0 +1,35 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Create .env file
+        run: |
+          cat <<EOF > .env
+          PORT=${{ vars.PORT }}
+          CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
+          DATABASE_PATH=/app/data/tasks.db
+          EOF
+
+      - name: Copy files to server
+        run: |
+          rsync -avz --exclude='.git' --exclude='.github' --exclude='*.db' --exclude='.venv' -e "ssh -o StrictHostKeyChecking=no" . ${{ vars.SSH_USER }}@${{ vars.SERVER_IP }}:/srv/${{ vars.APP_NAME }}
+
+      - name: Deploy with docker-compose
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ vars.SSH_USER }}@${{ vars.SERVER_IP }} "cd /srv/${{ vars.APP_NAME }} && docker compose up --build -d"
