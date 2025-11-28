@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
 
 jobs:
@@ -13,6 +14,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Set environment variables based on branch
+        id: set-env
+        run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          # Set variables based on branch
+          if [ "$BRANCH_NAME" == "main" ]; then
+            echo "port=${{ vars.PORT }}" >> $GITHUB_OUTPUT
+            echo "cors_origins=${{ vars.CORS_ORIGINS }}" >> $GITHUB_OUTPUT
+            echo "server_ip=${{ vars.SERVER_IP }}" >> $GITHUB_OUTPUT
+            echo "ssh_user=${{ vars.SSH_USER }}" >> $GITHUB_OUTPUT
+            echo "app_name=${{ vars.APP_NAME }}" >> $GITHUB_OUTPUT
+          elif [ "$BRANCH_NAME" == "dev" ]; then
+            echo "port=${{ vars.DEV_PORT }}" >> $GITHUB_OUTPUT
+            echo "cors_origins=${{ vars.DEV_CORS_ORIGINS }}" >> $GITHUB_OUTPUT
+            echo "server_ip=${{ vars.SERVER_IP }}" >> $GITHUB_OUTPUT
+            echo "ssh_user=${{ vars.SSH_USER }}" >> $GITHUB_OUTPUT
+            echo "app_name=${{ vars.DEV_APP_NAME }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up SSH key
         uses: webfactory/ssh-agent@v0.8.0
         with:
@@ -21,15 +43,20 @@ jobs:
       - name: Create .env file
         run: |
           cat <<EOF > .env
-          PORT=${{ vars.PORT }}
-          CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
+          PORT=${{ steps.set-env.outputs.port }}
+          CORS_ORIGINS=${{ steps.set-env.outputs.cors_origins }}
           DATABASE_PATH=/app/data/tasks.db
+          CONTAINER_NAME=${{ steps.set-env.outputs.app_name }}
           EOF
+
+      - name: Create deployment directory on server if not exists
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ steps.set-env.outputs.ssh_user }}@${{ steps.set-env.outputs.server_ip }} "mkdir -p /srv/${{ steps.set-env.outputs.app_name }}"
 
       - name: Copy files to server
         run: |
-          rsync -avz --exclude='.git' --exclude='.github' --exclude='*.db' --exclude='.venv' -e "ssh -o StrictHostKeyChecking=no" . ${{ vars.SSH_USER }}@${{ vars.SERVER_IP }}:/srv/${{ vars.APP_NAME }}
+          rsync -avz --exclude='.git' --exclude='.github' --exclude='*.db' --exclude='.venv' -e "ssh -o StrictHostKeyChecking=no" . ${{ steps.set-env.outputs.ssh_user }}@${{ steps.set-env.outputs.server_ip }}:/srv/${{ steps.set-env.outputs.app_name }}
 
       - name: Deploy with docker-compose
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ vars.SSH_USER }}@${{ vars.SERVER_IP }} "cd /srv/${{ vars.APP_NAME }} && docker compose up --build -d"
+          ssh -o StrictHostKeyChecking=no ${{ steps.set-env.outputs.ssh_user }}@${{ steps.set-env.outputs.server_ip }} "cd /srv/${{ steps.set-env.outputs.app_name }} && docker compose up --build -d"
